@@ -52,6 +52,18 @@ NAVIGATION = {
     "cart": [("tap", "Cart", "Open cart icon")],
 }
 
+# Wireframe often tags chrome / demo credential chips as tappable; skip those for Login.
+LOGIN_SKIP_LABELS = {
+    "menu",
+    "cart",
+    "mydemoapp",
+    "log_in",
+    "bod_example_com",
+    "alice_example_com_locked_out",
+    "visual_example_com",
+    "10203040",
+}
+
 
 class ScriptGeneratorAgent:
     def __init__(self, project_root: Optional[Path | str] = None) -> None:
@@ -116,6 +128,21 @@ class ScriptGeneratorAgent:
         body = "\n".join(body_lines).rstrip() + "\n"
         return self._base_template(screen, class_name, test_name, body, runtime=False)
 
+    def _filter_steps(self, screen: str, steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        if screen.lower() != "login":
+            return list(steps)
+        kept: List[Dict[str, Any]] = []
+        for step in steps:
+            label = str(step.get("element") or "")
+            key = _normalize_key(label)
+            if key in LOGIN_SKIP_LABELS or key.endswith("_example_com"):
+                continue
+            # Skip chrome already covered by NAVIGATION (Menu / Log In).
+            if key in {"menu", "log_in"}:
+                continue
+            kept.append(step)
+        return kept
+
     def _render_runtime_script(self, screen: str, steps: List[Dict[str, Any]]) -> str:
         class_name = "Test" + "".join(p.capitalize() for p in _slug(screen).split("_") if p)
         test_name = f"test_{_slug(screen)}"
@@ -132,7 +159,8 @@ class ScriptGeneratorAgent:
                 body_lines.append(f"        self.resolve_tap('{label}')")
             body_lines.append("")
 
-        for index, step in enumerate(steps, start=1):
+        filtered_steps = self._filter_steps(screen, steps)
+        for index, step in enumerate(filtered_steps, start=1):
             label = str(step.get("element") or f"Element {index}").replace("'", "\\'")
             action = str(step.get("action") or "verify").lower()
             body_lines.append(f"        # Step {index}: {action} -> {label}")
@@ -235,10 +263,32 @@ class {class_name}:
         self.driver = self._create_driver(desired_caps, appium_server)
         self.wait = WebDriverWait(self.driver, int(os.getenv("EXPLICIT_WAIT_TIMEOUT", "15")))
         self.platform = platform
+        self._dismiss_system_dialogs()
 
     def teardown_method(self) -> None:
         if getattr(self, "driver", None):
             self.driver.quit()
+
+    def _dismiss_system_dialogs(self) -> None:
+        """Dismiss Android system alerts (e.g. 16KB page-size compatibility)."""
+        if self.platform.lower() != "android":
+            return
+        for _ in range(3):
+            dismissed = False
+            for text in ("Don't Show Again", "OK", "Allow", "While using the app"):
+                try:
+                    el = self.driver.find_element(
+                        AppiumBy.ANDROID_UIAUTOMATOR,
+                        f'new UiSelector().text("{{text}}")',
+                    )
+                    if el.is_displayed():
+                        el.click()
+                        dismissed = True
+                        break
+                except Exception:
+                    continue
+            if not dismissed:
+                break
 
     def tap(self, locator_strategy: str, locator_value: str) -> None:
         locator = self._build_locator(locator_strategy, locator_value)

@@ -1,4 +1,4 @@
-# Capstone-Minimal
+# Mobile Script Generator - Wireframe
 
 Wireframe / screenshot → executable **Appium (Python)** tests for the SauceLabs My Demo App — with a **single minimal agent pipeline** and **only two commands**.
 
@@ -50,7 +50,7 @@ artifacts/input_screenshots/*.png
 ## Project layout
 
 ```
-Capstone-Minimal/
+Capstone-Minimal/   # Mobile Script Generator - Wireframe
 ├── agents/
 │   ├── vision_agent.py          # Screenshot → SSM
 │   ├── step_builder.py          # SSM → ordered actions
@@ -207,8 +207,8 @@ Default step building is **heuristic** (no API call).
 
 ## Difference from full Capstone
 
-| Full Capstone | Capstone-Minimal |
-|---------------|------------------|
+| Full Capstone | Mobile Script Generator - Wireframe |
+|---------------|--------------------------------------|
 | 6 steps (vision, manual TC, locator, script, review, report) | 2 modes only |
 | Separate locator + reviewer + navigation agents | Single pipeline + runtime resolver |
 | LangChain / self-healing optional stack | Removed |

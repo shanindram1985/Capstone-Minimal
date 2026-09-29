@@ -1,4 +1,4 @@
-"""pytest hooks for Capstone-Minimal Appium runs."""
+"""pytest hooks for Mobile Script Generator - Wireframe Appium runs."""
 
 from __future__ import annotations
 

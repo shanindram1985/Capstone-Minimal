@@ -1,4 +1,4 @@
-# Capstone-Minimal — wireframe → Appium (Python)
+# Mobile Script Generator - Wireframe — wireframe → Appium (Python)
 pydantic>=2.5,<3.0
 python-dotenv>=1.0.0
 openai>=1.0.0

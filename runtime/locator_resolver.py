@@ -12,17 +12,23 @@ from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+# Exact SauceLabs My Demo App IDs / text. Prefer these over fuzzy page-source scoring.
 SAUCELABS_HINTS: Dict[str, Tuple[str, str]] = {
     "username": ("resource_id", "com.saucelabs.mydemoapp.android:id/nameET"),
     "username_input": ("resource_id", "com.saucelabs.mydemoapp.android:id/nameET"),
     "password": ("resource_id", "com.saucelabs.mydemoapp.android:id/passwordET"),
     "password_input": ("resource_id", "com.saucelabs.mydemoapp.android:id/passwordET"),
     "login": ("resource_id", "com.saucelabs.mydemoapp.android:id/loginBtn"),
-    "log_in": ("resource_id", "com.saucelabs.mydemoapp.android:id/loginBtn"),
+    "login_button": ("resource_id", "com.saucelabs.mydemoapp.android:id/loginBtn"),
+    # Drawer menu entry (NOT the login form button)
+    "log_in": ("text", "Log In"),
     "menu": ("resource_id", "com.saucelabs.mydemoapp.android:id/menuIV"),
     "hamburger": ("resource_id", "com.saucelabs.mydemoapp.android:id/menuIV"),
     "cart": ("resource_id", "com.saucelabs.mydemoapp.android:id/cartIV"),
 }
+
+# Clickable-only bonus must not win when the real control is hidden behind a dialog.
+MIN_PAGE_SOURCE_SCORE = 20
 
 
 @dataclass
@@ -47,11 +53,25 @@ class RuntimeLocatorResolver:
             cached = self._cache[key]
             return cached.strategy, cached.value
 
-        resolved = self._resolve_from_page_source(label, prefer_editable=prefer_editable)
-        if resolved is None:
-            hint = self._hint_for(label)
-            if hint:
+        page_source = self.driver.page_source
+        if self.dump_dir:
+            self.dump_dir.mkdir(parents=True, exist_ok=True)
+            dump_path = self.dump_dir / f"page_source_{_slug(label)}.xml"
+            dump_path.write_text(page_source, encoding="utf-8")
+
+        # 1) Prefer known SauceLabs locator when that node is actually on screen.
+        hint = self._hint_for(label)
+        if hint and self._hint_present(page_source, hint):
+            resolved = ResolvedLocator(label, hint[0], hint[1], 200, "saucelabs_hint_present")
+        else:
+            # 2) Fuzzy match from page source (require meaningful token score).
+            resolved = self._resolve_from_page_source(
+                label, page_source, prefer_editable=prefer_editable
+            )
+            # 3) Fall back to hint even if not yet visible (caller wait may still succeed).
+            if resolved is None and hint:
                 resolved = ResolvedLocator(label, hint[0], hint[1], 50, "saucelabs_hint")
+
         if resolved is None:
             raise LookupError(f"Could not resolve live locator for label '{label}'")
 
@@ -67,13 +87,19 @@ class RuntimeLocatorResolver:
         )
         return resolved.strategy, resolved.value
 
-    def _resolve_from_page_source(self, label: str, prefer_editable: bool) -> Optional[ResolvedLocator]:
-        page_source = self.driver.page_source
-        if self.dump_dir:
-            self.dump_dir.mkdir(parents=True, exist_ok=True)
-            dump_path = self.dump_dir / f"page_source_{_slug(label)}.xml"
-            dump_path.write_text(page_source, encoding="utf-8")
+    def _hint_present(self, page_source: str, hint: Tuple[str, str]) -> bool:
+        strategy, value = hint
+        if strategy == "resource_id":
+            return value in page_source
+        if strategy == "accessibility_id":
+            return f'content-desc="{value}"' in page_source or value in page_source
+        if strategy == "text":
+            return f'text="{value}"' in page_source
+        return value in page_source
 
+    def _resolve_from_page_source(
+        self, label: str, page_source: str, prefer_editable: bool
+    ) -> Optional[ResolvedLocator]:
         try:
             root = ET.fromstring(page_source)
         except ET.ParseError:
@@ -82,6 +108,7 @@ class RuntimeLocatorResolver:
 
         tokens = _tokens(label)
         candidates: List[ResolvedLocator] = []
+        hint = self._hint_for(label)
 
         for node in root.iter():
             attrs = node.attrib
@@ -92,15 +119,21 @@ class RuntimeLocatorResolver:
             clickable = (attrs.get("clickable") or "").lower() == "true"
             password = (attrs.get("password") or "").lower() == "true"
 
+            # Ignore system alert chrome (16KB compat dialog, etc.)
+            if resource_id.startswith("android:id/") and "saucelabs" not in resource_id:
+                continue
+
             score = 0
             strategy = None
             value = None
             source = "page_source"
 
             blob = f"{resource_id} {content_desc} {text}".lower()
+            token_hits = 0
             for token in tokens:
                 if token and token in blob:
                     score += 10
+                    token_hits += 1
                 if token and token in resource_id.lower():
                     score += 15
                 if token and token in content_desc.lower():
@@ -117,13 +150,23 @@ class RuntimeLocatorResolver:
             if not prefer_editable and clickable:
                 score += 5
 
-            hint = self._hint_for(label)
             if hint and hint[0] == "resource_id" and resource_id == hint[1]:
                 score += 100
                 strategy, value = hint
                 source = "saucelabs_page_match"
+            elif hint and hint[0] == "text" and text == hint[1]:
+                score += 100
+                strategy, value = hint
+                source = "saucelabs_page_match"
+            elif hint and hint[0] == "accessibility_id" and content_desc == hint[1]:
+                score += 100
+                strategy, value = hint
+                source = "saucelabs_page_match"
 
-            if score <= 0:
+            # Reject pure clickable noise (e.g. dialog OK with score 5).
+            if score < MIN_PAGE_SOURCE_SCORE and source == "page_source":
+                continue
+            if token_hits == 0 and source == "page_source":
                 continue
 
             if strategy is None:
@@ -147,8 +190,13 @@ class RuntimeLocatorResolver:
         key = _slug(label)
         if key in SAUCELABS_HINTS:
             return SAUCELABS_HINTS[key]
-        for hint_key, locator in SAUCELABS_HINTS.items():
-            if hint_key in key or key in hint_key:
+        # Avoid "login" matching inside "log_in" (drawer vs form button).
+        for hint_key, locator in sorted(SAUCELABS_HINTS.items(), key=lambda x: -len(x[0])):
+            if hint_key == key:
+                return locator
+            if len(hint_key) >= 4 and (hint_key in key or key in hint_key):
+                if {"login", "log_in"} <= {hint_key, key}:
+                    continue
                 return locator
         return None
 

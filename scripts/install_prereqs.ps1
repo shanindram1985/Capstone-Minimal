@@ -1,4 +1,4 @@
-# Install system prerequisites for Capstone-Minimal on Windows (winget).
+# Install system prerequisites for Mobile Script Generator - Wireframe on Windows (winget).
 # Run from an elevated PowerShell if installs fail due to permissions.
 
 $ErrorActionPreference = "Continue"
@@ -6,7 +6,8 @@ $ErrorActionPreference = "Continue"
 function Install-WingetPackage {
     param([string]$Id, [string]$Name)
     Write-Host "`n==> Installing $Name ($Id)"
-    winget install --id $Id -e --accept-package-agreements --accept-source-agreements
+    # Force winget community source — msstore often fails with cert error 0x8a15005e
+    winget install --id $Id -e --source winget --accept-package-agreements --accept-source-agreements
 }
 
 Write-Host "Installing Git, GitHub CLI, Temurin JDK 17, Android Studio (SDK/emulator)..."
