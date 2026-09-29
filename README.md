@@ -127,6 +127,15 @@ Ensure `APP_PATH` points at `demo_mobile_apps/mda-2.2.0-25.apk` (resolved to an 
 
 ## Commands
 
+Always use the project venv (do **not** call bare `python` from system PATH):
+
+```powershell
+cd c:\Users\siddh\OneDrive\Desktop\Capstone-Minimal
+.\.venv\Scripts\Activate.ps1
+# recommended wrapper:
+.\scripts\run.ps1 generate artifacts\input_screenshots\Login.png
+```
+
 Activate the venv:
 
 ```powershell
