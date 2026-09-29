@@ -1,13 +1,17 @@
 # Mobile Script Generator - Wireframe
 
-Wireframe / screenshot → executable **Appium (Python)** tests for the SauceLabs My Demo App — with a **single minimal agent pipeline** and **only two commands**.
+Wireframe / screenshot → executable **Appium (Python)** tests for a retail mobile app. One pipeline, two commands.
 
 | Mode | What it does |
 |------|----------------|
-| `generate` | Vision → SSM → Appium script with **dummy** locators (no device needed) |
-| `execute` | Vision → SSM → Appium script that **fetches locators on the fly** from the live app → run → HTML report |
+| `generate` | Vision → SSM JSON → Appium script with **dummy** locators (no device) |
+| `execute` | Vision → SSM JSON → retail test suite with **live** locators → run → visual HTML report |
 
-No separate locator agent, no manual testcases, no reviewer, no self-healing stack.
+The suite is not a single happy path. `prompts/script_steps.txt` and the step builder turn each screen’s SSM into **positive, negative, and edge** cases for that wireframe.
+
+**Target app:** SauceLabs My Demo App Android (`demo_mobile_apps/mda-2.2.0-25.apk`).
+
+**Slides:** [Mobile-Script-Generator-Wireframe.pptx](Mobile-Script-Generator-Wireframe.pptx) (7 slides). Rebuild with `.\.venv\Scripts\python.exe scripts\build_presentation.py`.
 
 ---
 
@@ -18,32 +22,29 @@ artifacts/input_screenshots/*.png
             │
             ▼
      ┌──────────────┐
-     │ Vision Agent │  prompts/vision_analysis.txt  (cursor | mock | openai)
+     │ Vision Agent │  prompts/vision_analysis.txt
      └──────┬───────┘
             ▼
      artifacts/ssm_json_output/*.json
             │
             ▼
      ┌──────────────┐
-     │ Step Builder │  heuristics (or optional LLM via script_steps.txt)
-     └──────┬───────┘
+     │ Step Builder │  prompts/script_steps.txt
+     └──────┬───────┘   retail cases from this SSM only
             ▼
      ┌───────────────────┐
-     │ Script Generator  │
+     │ Script Generator  │  one pytest method per case
      └──────┬────────────┘
             │
      ┌──────┴──────────────────────────┐
      │                                 │
  generate                            execute
  dummy locators               RuntimeLocatorResolver
- com.example.dummy:id/...     (page source match + SauceLabs hints)
                                       │
                                       ▼
-                               pytest + pytest-html
+                               visual HTML report
                                artifacts/test_execution_reports/
 ```
-
-**Target app:** SauceLabs My Demo App Android (`demo_mobile_apps/mda-2.2.0-25.apk`), login flow.
 
 ---
 
@@ -53,166 +54,296 @@ artifacts/input_screenshots/*.png
 Mobile-Script-Generator-Wireframe/
 ├── agents/
 │   ├── vision_agent.py          # Screenshot → SSM
-│   ├── step_builder.py          # SSM → ordered actions
-│   ├── script_generator.py      # Actions → Appium pytest
-│   └── reporter_agent.py        # pytest-html
-├── runtime/
-│   └── locator_resolver.py      # Live page-source locator fetch
+│   ├── step_builder.py          # SSM → positive / negative / edge cases
+│   ├── script_generator.py      # Cases → Appium pytest
+│   └── reporter_agent.py        # Visual HTML report
+├── runtime/locator_resolver.py  # Live page-source locator fetch
 ├── models/ssm.py
 ├── prompts/
 │   ├── vision_analysis.txt
-│   └── script_steps.txt
+│   └── script_steps.txt         # Retail coverage rules
 ├── pipelines/run.py             # CLI: generate | execute
 ├── scripts/
-│   ├── install_prereqs.ps1      # Git, gh, JDK, Android Studio
-│   ├── setup_env.ps1 / .sh      # Python venv + deps
-│   └── setup_appium.ps1         # Appium + UiAutomator2
-├── artifacts/input_screenshots/ # e.g. Login.png
+│   ├── install_prereqs.ps1
+│   ├── setup_env.ps1 / .sh
+│   ├── setup_appium.ps1
+│   └── build_presentation.py
+├── artifacts/input_screenshots/
 ├── demo_mobile_apps/            # mda-2.2.0-25.apk
-├── requirements.txt
-├── .env.example
-└── conftest.py
+└── Mobile-Script-Generator-Wireframe.pptx
 ```
 
 ---
 
-## Prerequisites
+## Test coverage
 
-| Software | Purpose |
-|----------|---------|
-| Python 3.11+ (3.12 recommended) | Pipeline + Appium client |
-| Node.js 18+ / npm | Appium server |
-| JDK 17 | Android tooling |
-| Android Studio + SDK + emulator (or real device) | Run My Demo App |
-| Appium 2 + UiAutomator2 driver | Automation server |
-| Git + GitHub CLI | Version control / push |
-| `CURSOR_API_KEY` (Cursor Dashboard → Integrations) | Vision / optional LLM steps (no OpenAI key needed) |
-| OpenAI API key (optional legacy) | Only if `VISION_AGENT_PROVIDER=openai` |
+Cases use **only labels present on that wireframe’s SSM**. The same prompt covers every screen type.
 
-### One-shot Windows install
+| Wireframe | Positive | Negative | Edge |
+|-----------|----------|----------|------|
+| Login | `bod@example.com` / `10203040`, visual user | Locked-out user, bad password, unknown user, empty fields | Whitespace, 120 characters, special characters |
+| Listing | Search `backpack`, scroll catalog | Empty search, no-match query | Whitespace, long query, special characters |
+| Product details | Quantity 1, Add to cart | Empty quantity, quantity 0 | Quantity 99 |
+| Cart | Promo `SAVE10` | Empty promo, `NOT-A-CODE` | Remove, quantity boundaries |
+| Checkout | Name, address, ZIP, card, CVV | Missing and invalid fields | Whitespace, oversized text, numeric bounds |
+
+Login tests open the menu, then Log In, before filling the form. Each case is its own pytest method and starts a fresh session.
+
+---
+
+## Setup from scratch (Windows)
+
+Do these in order. PowerShell on this machine blocks `.ps1` files, so either call the `.exe` / `.cmd` directly or start a script with:
 
 ```powershell
-cd Mobile-Script-Generator-Wireframe
-powershell -ExecutionPolicy Bypass -File .\scripts\install_prereqs.ps1
-# Open a NEW terminal after winget finishes, then:
-powershell -ExecutionPolicy Bypass -File .\scripts\setup_env.ps1
-powershell -ExecutionPolicy Bypass -File .\scripts\setup_appium.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\<script>.ps1
 ```
 
-Manual Android steps after Android Studio install:
+There is no `APPIUM_HOME` variable to set. Appium keeps drivers in `%USERPROFILE%\.appium`. The variables Appium **does** require are `JAVA_HOME` and `ANDROID_HOME`.
 
-1. SDK Manager → Platform-Tools, API 34, emulator system image  
-2. Device Manager → create an AVD and start it  
-3. Add to PATH: `%LOCALAPPDATA%\Android\Sdk\platform-tools` and `...\emulator`  
-4. Verify: `adb devices`
-
----
-
-## Configure
-
-```powershell
-copy .env.example .env
-# Edit .env:
-#   VISION_AGENT_PROVIDER=cursor
-#   CURSOR_API_KEY=cursor_...   # from https://cursor.com/dashboard/integrations
-#   CURSOR_MODEL=composer-2.5
-#
-# OpenAI is NOT required. Keep OPENAI_API_KEY empty.
-# Offline fallback without Cursor: VISION_AGENT_PROVIDER=mock
-```
-
-Ensure `APP_PATH` points at `demo_mobile_apps/mda-2.2.0-25.apk` (resolved to an absolute path automatically during `execute`).
-
----
-
-## Commands
-
-Always use the project venv (do **not** call bare `python` from system PATH):
+### 1. Project folder
 
 ```powershell
 cd c:\Users\siddh\OneDrive\Desktop\Mobile-Script-Generator-Wireframe
-.\.venv\Scripts\Activate.ps1
-# recommended wrapper:
-.\scripts\run.ps1 generate artifacts\input_screenshots\Login.png
 ```
 
-Activate the venv:
+### 2. Git, JDK 17, Android Studio
 
 ```powershell
-.\.venv\Scripts\Activate.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\install_prereqs.ps1
 ```
 
-### 1) Generate script only (dummy locators — no Appium/device)
+That script installs from the `winget` source (the Microsoft Store source often fails with certificate error `0x8a15005e`):
+
+- Git
+- GitHub CLI
+- Eclipse Temurin JDK 17
+- Android Studio, if `%LOCALAPPDATA%\Android\Sdk` is not already there
+
+Node.js is required for Appium and is not in that script. Install it, then open a **new** terminal:
 
 ```powershell
-python pipelines/run.py generate artifacts/input_screenshots/Login.png
+winget install --id OpenJS.NodeJS.LTS -e --source winget --accept-package-agreements --accept-source-agreements
 ```
 
-Output:
+### 3. `JAVA_HOME` and `ANDROID_HOME`
 
-- `artifacts/ssm_json_output/ssm_Login_*.json`
-- `artifacts/generated_appium_scripts/test_login_screen.py` (dummy IDs like `com.example.dummy:id/username`)
-
-### 2) Real execution (on-the-fly locators + report)
-
-Terminal A — start Appium:
+Find the JDK folder (the one that contains `bin\java.exe`), then save both variables for your user:
 
 ```powershell
-appium
+# Example after Temurin 17 is installed. Use the folder that actually exists.
+dir "C:\Program Files\Eclipse Adoptium"
+
+setx JAVA_HOME "C:\Program Files\Eclipse Adoptium\jdk-17.0.20.101-hotspot"
+setx ANDROID_HOME "%LOCALAPPDATA%\Android\Sdk"
+setx ANDROID_SDK_ROOT "%LOCALAPPDATA%\Android\Sdk"
 ```
 
-Terminal B — emulator/device online (`adb devices`), then:
+`setx` applies to **new** terminals only. Also add these to the user Path:
+
+- `%LOCALAPPDATA%\Android\Sdk\platform-tools`
+- `%LOCALAPPDATA%\Android\Sdk\emulator`
+- `%JAVA_HOME%\bin`
+
+Open a new PowerShell and check:
 
 ```powershell
-.\.venv\Scripts\Activate.ps1
-python pipelines/run.py execute artifacts/input_screenshots/Login.png
-# or without opening the browser:
-python pipelines/run.py execute artifacts/input_screenshots/Login.png --no-browser
+java -version
+echo $env:JAVA_HOME
+echo $env:ANDROID_HOME
+```
+
+`java -version` must print 17. `ANDROID_HOME` must be `C:\Users\<you>\AppData\Local\Android\Sdk`.
+
+### 4. Android SDK and emulator
+
+Open Android Studio (`C:\Program Files\Android\Android Studio\bin\studio64.exe`).
+
+SDK Manager:
+
+1. **SDK Platforms:** Android 14 (API 34) or Android 15 (API 35). Do **not** install a system image labeled **16 KB Page Size**.
+2. **SDK Tools:** Android SDK Platform-Tools, Android Emulator, Android SDK Build-Tools.
+
+Device Manager:
+
+1. **Create Device** → Pixel 6.
+2. System image: **Google APIs**, **x86_64**, API 34 or 35. Download it if needed.
+3. Show Advanced Settings → RAM **4096 MB**.
+4. Finish, then start it with **Cold Boot Now**.
+5. Wait until the home screen is up. The first boot can take several minutes.
+
+Check the emulator. `device` is the only good state:
+
+```powershell
+& "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe" devices
+```
+
+```text
+emulator-5554   device
+```
+
+| `adb` status | Meaning |
+|--------------|---------|
+| `device` | Ready for Appium |
+| `offline` | Process is up, Android has not finished the handshake. Wait, or cold-boot a normal (not 16 KB) image with at least 4 GB RAM |
+| `unauthorized` | Accept the USB debugging prompt on the device |
+| empty list | Emulator is not running |
+
+See the Android version, then set `.env` to the same major version:
+
+```powershell
+& "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe" shell getprop ro.build.version.release
+```
+
+If that prints `15`, set `PLATFORM_VERSION=15` in `.env`. A mismatch produces `Unable to find an active device or emulator with OS …`.
+
+### 5. Python 3.12 virtual environment
+
+Use Python 3.12. System Python 3.14 does not have this project’s packages, which shows up as `No module named pydantic`.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\setup_env.ps1
+```
+
+If activation is blocked, create the venv without the script:
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+copy .env.example .env
+```
+
+### 6. `.env`
+
+```powershell
+copy .env.example .env
+```
+
+Edit `.env`:
+
+- `VISION_AGENT_PROVIDER=cursor`
+- `CURSOR_API_KEY=` your key from the Cursor dashboard
+- `OPENAI_API_KEY=` leave empty
+- `PLATFORM_VERSION=` the emulator Android version from step 4
+- `APPIUM_SERVER_URL=http://127.0.0.1:4723`
+- `APP_PATH=demo_mobile_apps/mda-2.2.0-25.apk`
+
+### 7. Appium and the UiAutomator2 driver
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\setup_appium.ps1
+```
+
+That runs `npm install -g appium` and `appium driver install uiautomator2`.
+
+If `appium` itself is blocked as a script, install the driver with the `.cmd` launcher:
+
+```powershell
+npm install -g appium
+appium.cmd driver install uiautomator2
+appium.cmd driver list --installed
+```
+
+You should see `uiautomator2`.
+
+### 8. Start Appium (leave this window open)
+
+`appium` resolves to `appium.ps1`, which PowerShell may refuse. Use `appium.cmd`. The server only sees environment variables from **this** window, so set them here even if `setx` was already done:
+
+```powershell
+$env:JAVA_HOME = [Environment]::GetEnvironmentVariable("JAVA_HOME", "User")
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+$env:ANDROID_SDK_ROOT = $env:ANDROID_HOME
+$env:Path = "$env:JAVA_HOME\bin;$env:ANDROID_HOME\platform-tools;$env:Path"
+appium.cmd
+```
+
+Wait for:
+
+```text
+Appium REST http interface listener started on http://0.0.0.0:4723
+```
+
+In another terminal:
+
+```powershell
+curl http://127.0.0.1:4723/status
+```
+
+A connection error means Appium is not running.
+
+### 9. Generate (no device, no Appium)
+
+```powershell
+.\.venv\Scripts\python.exe pipelines/run.py generate artifacts/input_screenshots/Login.png
+```
+
+Writes:
+
+- `artifacts/ssm_json_output/ssm_<Screen>_*.json`
+- `artifacts/generated_appium_scripts/test_<screen>_screen.py`
+
+### 10. Execute (emulator `device` + Appium up)
+
+```powershell
+.\.venv\Scripts\python.exe pipelines/run.py execute artifacts/input_screenshots/Login.png
+```
+
+Add `--no-browser` to skip opening the report.
+
+Before this command, both of these must already be true:
+
+```powershell
+curl http://127.0.0.1:4723/status
+& "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe" devices
 ```
 
 Output:
 
 - Runtime script under `artifacts/generated_appium_scripts/`
-- Resolved locators dump: `artifacts/resolved_locators/`
-- HTML report: `artifacts/test_execution_reports/<timestamp>/report.html`
-- Failure screenshots (if any): `artifacts/test_screenshots/`
+- `artifacts/resolved_locators/`
+- `artifacts/test_execution_reports/<timestamp>/report.html`
+- Failure screenshots in `artifacts/test_screenshots/`
 
-Demo login credentials used by the step builder: `bod@example.com` / `10203040`.
+The report shows a pass-rate banner, result counts, a donut, time-per-test bars, and status pills for positive, negative, and edge cases.
+
+### Setup checklist
+
+| Check | Command | Expected |
+|-------|---------|----------|
+| Java | `java -version` | 17 |
+| `JAVA_HOME` | `echo $env:JAVA_HOME` | Temurin JDK 17 folder |
+| `ANDROID_HOME` | `echo $env:ANDROID_HOME` | `%LOCALAPPDATA%\Android\Sdk` |
+| Emulator | `adb devices` | `emulator-5554   device` |
+| Android version | `adb shell getprop ro.build.version.release` | Same as `PLATFORM_VERSION` |
+| Appium | `curl http://127.0.0.1:4723/status` | JSON status, not connection refused |
+| UiAutomator2 | `appium.cmd driver list --installed` | `uiautomator2` |
+| Project Python | `.\.venv\Scripts\python.exe -c "import pydantic"` | No error |
 
 ---
 
 ## How locators work
 
-**generate:** scripts embed placeholder resource IDs (`com.example.dummy:id/...`) so you can inspect structure without a device.
+**generate** embeds placeholder IDs (`com.example.dummy:id/...`).
 
-**execute:** generated tests call `RuntimeLocatorResolver`, which:
+**execute** calls `RuntimeLocatorResolver`, which:
 
-1. Reads Appium `page_source` XML  
-2. Scores nodes by label tokens vs `resource-id` / `content-desc` / `text`  
-3. Boosts known SauceLabs My Demo App IDs when present (`nameET`, `passwordET`, `loginBtn`, `menuIV`, …)  
-4. Caches and writes matches to `artifacts/resolved_locators/resolved_locators.json`
+1. Reads Appium `page_source`
+2. Prefers a known My Demo App control when that node is on screen (`menuIV`, `nameET`, `passwordET`, `loginBtn`, drawer text `Log In`)
+3. Ignores Android system dialog chrome
+4. Writes matches to `artifacts/resolved_locators/resolved_locators.json`
 
 ---
 
 ## Prompts
 
-| File | Used by |
-|------|---------|
-| `prompts/vision_analysis.txt` | Vision agent (wireframe → SSM JSON) |
-| `prompts/script_steps.txt` | Optional LLM step builder (`STEP_BUILDER_PROVIDER=openai`) |
+| File | Role |
+|------|------|
+| `prompts/vision_analysis.txt` | Screenshot → SSM JSON |
+| `prompts/script_steps.txt` | SSM JSON → retail positive, negative, and edge cases |
 
-Default step building is **heuristic** (no API call).
-
----
-
-## Difference from full Capstone
-
-| Full Capstone | Mobile Script Generator - Wireframe |
-|---------------|--------------------------------------|
-| 6 steps (vision, manual TC, locator, script, review, report) | 2 modes only |
-| Separate locator + reviewer + navigation agents | Single pipeline + runtime resolver |
-| LangChain / self-healing optional stack | Removed |
-| Manual testcase artifacts | Removed |
+The default step builder follows those retail rules from the SSM. Set `STEP_BUILDER_PROVIDER=cursor` to ask the model, using the same prompt. Thin model output falls back to the SSM rules.
 
 ---
 
@@ -220,14 +351,16 @@ Default step building is **heuristic** (no API call).
 
 | Issue | Fix |
 |-------|-----|
-| `OPENAI_API_KEY is required` / OpenAI errors | Use Cursor instead: set `VISION_AGENT_PROVIDER=cursor` and `CURSOR_API_KEY` from https://cursor.com/dashboard/integrations |
-| `CURSOR_API_KEY is required` | Paste your Cursor API key into `.env` (not an OpenAI `sk-` key) |
-| Appium session fails | `appium` running? `adb devices` shows device? `APP_PATH` valid? |
-| Cannot find elements on Login | App must reach login via menu; runtime navigates Menu → Log In first |
-| Import errors for `runtime` | Run from project root so `ROOT` is on `sys.path` (pipeline does this) |
+| `No module named pydantic` | Call `.\.venv\Scripts\python.exe`, not system `python`. |
+| `appium.ps1` or `Activate.ps1` cannot be loaded | Use `appium.cmd` and the venv `python.exe`. |
+| Connection refused on port 4723 | Start Appium and leave that window open. |
+| `ANDROID_HOME` / `JAVA_HOME` not set | Set them in the **same** terminal that starts Appium, then restart Appium. |
+| Emulator OS does not match | Set `PLATFORM_VERSION` in `.env` to the AVD version. |
+| `adb` stays `offline` | Cold-boot a normal API image. Avoid 16 KB page-size images. Give the AVD at least 4 GB RAM. |
+| Menu tap hits the wrong control | A system dialog was in front. Dismiss it, then re-run. The suite now dismisses common alerts first. |
 
 ---
 
 ## License / demo app
 
-SauceLabs My Demo App APK is included for local automation demos. Respect Sauce Labs licensing for redistribution.
+The SauceLabs My Demo App APK is included for local automation demos. Respect Sauce Labs licensing for redistribution.

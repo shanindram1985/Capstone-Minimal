@@ -188,17 +188,7 @@ class RuntimeLocatorResolver:
 
     def _hint_for(self, label: str) -> Optional[Tuple[str, str]]:
         key = _slug(label)
-        if key in SAUCELABS_HINTS:
-            return SAUCELABS_HINTS[key]
-        # Avoid "login" matching inside "log_in" (drawer vs form button).
-        for hint_key, locator in sorted(SAUCELABS_HINTS.items(), key=lambda x: -len(x[0])):
-            if hint_key == key:
-                return locator
-            if len(hint_key) >= 4 and (hint_key in key or key in hint_key):
-                if {"login", "log_in"} <= {hint_key, key}:
-                    continue
-                return locator
-        return None
+        return SAUCELABS_HINTS.get(key)
 
     def _persist(self, resolved: ResolvedLocator) -> None:
         if not self.dump_dir:

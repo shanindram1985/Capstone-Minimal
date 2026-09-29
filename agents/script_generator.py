@@ -25,6 +25,36 @@ DUMMY_LOCATORS = {
 }
 
 
+def _py(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("'", "\\'")
+
+
+def _case_method_name(screen: str, case: Dict[str, Any]) -> str:
+    category = str(case.get("category") or "case")
+    name = str(case.get("name") or "scenario")
+    return "test_" + _slug(f"{screen}_{category}_{name}")
+
+
+def _case_doc(screen: str, case: Dict[str, Any]) -> str:
+    category = str(case.get("category") or "case")
+    name = str(case.get("name") or "scenario")
+    expected = str(case.get("expected") or "").strip()
+    text = f"{screen} {category}: {name}"
+    if expected:
+        text += f". {expected}"
+    return text.replace('"', "'")
+
+
+def _cases_from_payload(step_payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    cases = step_payload.get("cases")
+    if isinstance(cases, list) and cases:
+        return [case for case in cases if isinstance(case, dict) and case.get("steps")]
+    steps = step_payload.get("steps") or []
+    if not steps:
+        return []
+    return [{"name": "happy_path", "category": "positive", "expected": "", "steps": steps}]
+
+
 def _slug(value: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "_", str(value).strip().lower()).strip("_")
     return slug or "screen"
@@ -81,14 +111,14 @@ class ScriptGeneratorAgent:
             raise ValueError("mode must be 'dummy' or 'runtime'")
 
         screen = str(step_payload.get("screen") or "Screen")
-        steps = step_payload.get("steps") or []
-        if not steps:
+        cases = _cases_from_payload(step_payload)
+        if not cases:
             raise ValueError("No steps to generate a script from.")
 
         content = (
-            self._render_runtime_script(screen, steps)
+            self._render_runtime_script(screen, cases)
             if mode == "runtime"
-            else self._render_dummy_script(screen, steps)
+            else self._render_dummy_script(screen, cases)
         )
 
         dest = Path(output_dir or self.output_dir)
@@ -98,35 +128,73 @@ class ScriptGeneratorAgent:
         logger.info("[ScriptGenerator] Wrote %s (%s mode)", out_path.name, mode)
         return out_path
 
-    def _render_dummy_script(self, screen: str, steps: List[Dict[str, Any]]) -> str:
+    def _render_dummy_script(self, screen: str, cases: List[Dict[str, Any]]) -> str:
         class_name = "Test" + "".join(p.capitalize() for p in _slug(screen).split("_") if p)
-        test_name = f"test_{_slug(screen)}"
-        body_lines: List[str] = [
-            f'        """Generated from wireframe for {screen} with DUMMY locators."""',
-            "        # WARNING: dummy locators are placeholders - use `execute` mode for real runs.",
-            "",
-        ]
-        for index, step in enumerate(steps, start=1):
-            label = str(step.get("element") or f"Element {index}")
-            action = str(step.get("action") or "verify").lower()
-            strategy, value = dummy_locator_for(label)
-            body_lines.append(f"        # Step {index}: {action} -> {label}")
-            if action == "type":
-                text = str(step.get("input_value") or "test").replace("'", "\\'")
-                body_lines.append(f"        self.type('{strategy}', '{value}', '{text}')")
-            elif action == "scroll":
-                body_lines.append(f"        self.scroll('{strategy}', '{value}')")
-            elif action == "tap":
-                body_lines.append(f"        self.tap('{strategy}', '{value}')")
-            else:
-                body_lines.append(
-                    "        self.wait.until(EC.visibility_of_element_located("
-                    f"self._build_locator('{strategy}', '{value}')))"
-                )
-            body_lines.append("")
+        methods: List[str] = []
+        for case in cases:
+            test_name = _case_method_name(screen, case)
+            body_lines: List[str] = [
+                f'        """{_case_doc(screen, case)}"""',
+                "        # WARNING: dummy locators are placeholders - use `execute` mode for real runs.",
+                "",
+            ]
+            body_lines.extend(self._step_lines(screen, case.get("steps") or [], runtime=False))
+            methods.append(f"    def {test_name}(self) -> None:\n" + "\n".join(body_lines).rstrip() + "\n")
+        return self._base_template(screen, class_name, "\n".join(methods), runtime=False)
 
-        body = "\n".join(body_lines).rstrip() + "\n"
-        return self._base_template(screen, class_name, test_name, body, runtime=False)
+    def _render_runtime_script(self, screen: str, cases: List[Dict[str, Any]]) -> str:
+        class_name = "Test" + "".join(p.capitalize() for p in _slug(screen).split("_") if p)
+        methods: List[str] = []
+        for case in cases:
+            test_name = _case_method_name(screen, case)
+            body_lines: List[str] = [
+                f'        """{_case_doc(screen, case)}"""',
+                "        dump_dir = Path(os.getenv('RESOLVED_LOCATORS_DIR', 'artifacts/resolved_locators'))",
+                "        self.resolver = RuntimeLocatorResolver(self.driver, self.wait, dump_dir=dump_dir)",
+                "",
+            ]
+            for nav_action, label, comment in NAVIGATION.get(screen.lower(), []):
+                body_lines.append(f"        # Navigate: {comment}")
+                if nav_action == "tap":
+                    body_lines.append(f"        self.resolve_tap('{_py(label)}')")
+                body_lines.append("")
+            body_lines.extend(self._step_lines(screen, case.get("steps") or [], runtime=True))
+            methods.append(f"    def {test_name}(self) -> None:\n" + "\n".join(body_lines).rstrip() + "\n")
+        return self._base_template(screen, class_name, "\n".join(methods), runtime=True)
+
+    def _step_lines(self, screen: str, steps: List[Dict[str, Any]], runtime: bool) -> List[str]:
+        lines: List[str] = []
+        filtered = self._filter_steps(screen, steps)
+        for index, step in enumerate(filtered, start=1):
+            label = _py(str(step.get("element") or f"Element {index}"))
+            action = str(step.get("action") or "verify").lower()
+            lines.append(f"        # Step {index}: {action} -> {label}")
+            if runtime:
+                if action == "type":
+                    text = _py(str(step.get("input_value") or ""))
+                    lines.append(f"        self.resolve_type('{label}', '{text}')")
+                elif action == "scroll":
+                    lines.append(f"        self.resolve_scroll('{label}')")
+                elif action == "tap":
+                    lines.append(f"        self.resolve_tap('{label}')")
+                else:
+                    lines.append(f"        self.resolve_verify('{label}')")
+            else:
+                strategy, value = dummy_locator_for(label)
+                if action == "type":
+                    text = _py(str(step.get("input_value") or ""))
+                    lines.append(f"        self.type('{strategy}', '{value}', '{text}')")
+                elif action == "scroll":
+                    lines.append(f"        self.scroll('{strategy}', '{value}')")
+                elif action == "tap":
+                    lines.append(f"        self.tap('{strategy}', '{value}')")
+                else:
+                    lines.append(
+                        "        self.wait.until(EC.visibility_of_element_located("
+                        f"self._build_locator('{strategy}', '{value}')))"
+                    )
+            lines.append("")
+        return lines
 
     def _filter_steps(self, screen: str, steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if screen.lower() != "login":
@@ -143,47 +211,11 @@ class ScriptGeneratorAgent:
             kept.append(step)
         return kept
 
-    def _render_runtime_script(self, screen: str, steps: List[Dict[str, Any]]) -> str:
-        class_name = "Test" + "".join(p.capitalize() for p in _slug(screen).split("_") if p)
-        test_name = f"test_{_slug(screen)}"
-        body_lines: List[str] = [
-            f'        """Execute {screen}: resolve locators on-the-fly from the live app."""',
-            "        dump_dir = Path(os.getenv('RESOLVED_LOCATORS_DIR', 'artifacts/resolved_locators'))",
-            "        self.resolver = RuntimeLocatorResolver(self.driver, self.wait, dump_dir=dump_dir)",
-            "",
-        ]
-
-        for nav_action, label, comment in NAVIGATION.get(screen.lower(), []):
-            body_lines.append(f"        # Navigate: {comment}")
-            if nav_action == "tap":
-                body_lines.append(f"        self.resolve_tap('{label}')")
-            body_lines.append("")
-
-        filtered_steps = self._filter_steps(screen, steps)
-        for index, step in enumerate(filtered_steps, start=1):
-            label = str(step.get("element") or f"Element {index}").replace("'", "\\'")
-            action = str(step.get("action") or "verify").lower()
-            body_lines.append(f"        # Step {index}: {action} -> {label}")
-            if action == "type":
-                text = str(step.get("input_value") or "test").replace("'", "\\'")
-                body_lines.append(f"        self.resolve_type('{label}', '{text}')")
-            elif action == "scroll":
-                body_lines.append(f"        self.resolve_scroll('{label}')")
-            elif action == "tap":
-                body_lines.append(f"        self.resolve_tap('{label}')")
-            else:
-                body_lines.append(f"        self.resolve_verify('{label}')")
-            body_lines.append("")
-
-        body = "\n".join(body_lines).rstrip() + "\n"
-        return self._base_template(screen, class_name, test_name, body, runtime=True)
-
     def _base_template(
         self,
         screen: str,
         class_name: str,
-        test_name: str,
-        body: str,
+        methods: str,
         runtime: bool,
     ) -> str:
         if runtime:
@@ -350,6 +382,5 @@ class {class_name}:
             return f'new UiSelector().resourceId("{{locator_value}}")'
         return f'new UiSelector().text("{{locator_value}}")'
 {runtime_helpers}
-    def {test_name}(self) -> None:
-{body}
+{methods}
 '''

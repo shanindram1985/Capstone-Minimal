@@ -99,7 +99,8 @@ def run_generate(images: list[Path]) -> list[Path]:
 
         print("[2/3] Build actionable steps")
         step_payload = steps_agent.build_steps(ssm.model_dump())
-        print(f"      {len(step_payload.get('steps') or [])} steps for '{step_payload.get('screen')}'")
+        cases = step_payload.get("cases") or []
+        print(f"      {len(cases)} test cases for '{step_payload.get('screen')}'")
 
         print("[3/3] Generate Appium script with DUMMY locators")
         script_path = generator.generate(step_payload, mode="dummy", output_dir=scripts_dir)
@@ -145,6 +146,8 @@ def run_execute(images: list[Path], open_browser: bool = True) -> Path:
 
         print("[2/3] Build steps + generate RUNTIME script (locators fetched on device)")
         step_payload = steps_agent.build_steps(ssm.model_dump())
+        cases = step_payload.get("cases") or []
+        print(f"      {len(cases)} test cases for '{step_payload.get('screen')}'")
         script_path = generator.generate(step_payload, mode="runtime", output_dir=scripts_dir)
         print(f"      Script -> {script_path}")
 
