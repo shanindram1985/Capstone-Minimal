@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.py[cod]
+.env
+.pytest_cache/
+.mypy_cache/
+*.log
+artifacts/ssm_json_output/
+artifacts/generated_appium_scripts/
+artifacts/test_execution_reports/
+artifacts/resolved_locators/
+artifacts/test_screenshots/
+!artifacts/input_screenshots/
+!artifacts/input_screenshots/**
+!demo_mobile_apps/
+.idea/
+.vscode/
