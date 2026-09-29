@@ -18,7 +18,7 @@ artifacts/input_screenshots/*.png
             │
             ▼
      ┌──────────────┐
-     │ Vision Agent │  prompts/vision_analysis.txt  (openai | mock)
+     │ Vision Agent │  prompts/vision_analysis.txt  (cursor | mock | openai)
      └──────┬───────┘
             ▼
      artifacts/ssm_json_output/*.json
@@ -86,7 +86,8 @@ Capstone-Minimal/
 | Android Studio + SDK + emulator (or real device) | Run My Demo App |
 | Appium 2 + UiAutomator2 driver | Automation server |
 | Git + GitHub CLI | Version control / push |
-| OpenAI API key (optional) | Real vision instead of mock |
+| `CURSOR_API_KEY` (Cursor Dashboard → Integrations) | Vision / optional LLM steps (no OpenAI key needed) |
+| OpenAI API key (optional legacy) | Only if `VISION_AGENT_PROVIDER=openai` |
 
 ### One-shot Windows install
 
@@ -111,11 +112,13 @@ Manual Android steps after Android Studio install:
 
 ```powershell
 copy .env.example .env
-# Edit .env — for offline demo keep:
-#   VISION_AGENT_PROVIDER=mock
-# For real vision:
-#   VISION_AGENT_PROVIDER=openai
-#   OPENAI_API_KEY=sk-...
+# Edit .env:
+#   VISION_AGENT_PROVIDER=cursor
+#   CURSOR_API_KEY=cursor_...   # from https://cursor.com/dashboard/integrations
+#   CURSOR_MODEL=composer-2.5
+#
+# OpenAI is NOT required. Keep OPENAI_API_KEY empty.
+# Offline fallback without Cursor: VISION_AGENT_PROVIDER=mock
 ```
 
 Ensure `APP_PATH` points at `demo_mobile_apps/mda-2.2.0-25.apk` (resolved to an absolute path automatically during `execute`).
@@ -208,7 +211,8 @@ Default step building is **heuristic** (no API call).
 
 | Issue | Fix |
 |-------|-----|
-| `OPENAI_API_KEY is required` | Set key or use `VISION_AGENT_PROVIDER=mock` |
+| `OPENAI_API_KEY is required` / OpenAI errors | Use Cursor instead: set `VISION_AGENT_PROVIDER=cursor` and `CURSOR_API_KEY` from https://cursor.com/dashboard/integrations |
+| `CURSOR_API_KEY is required` | Paste your Cursor API key into `.env` (not an OpenAI `sk-` key) |
 | Appium session fails | `appium` running? `adb devices` shows device? `APP_PATH` valid? |
 | Cannot find elements on Login | App must reach login via menu; runtime navigates Menu → Log In first |
 | Import errors for `runtime` | Run from project root so `ROOT` is on `sys.path` (pipeline does this) |

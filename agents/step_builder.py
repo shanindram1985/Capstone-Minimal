@@ -9,8 +9,6 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List
 
-from openai import OpenAI
-
 logger = logging.getLogger(__name__)
 
 DEMO_USERNAME = "bod@example.com"
@@ -32,18 +30,24 @@ ACTIONABLE_TYPES = {
 
 
 class StepBuilder:
-    """Derive Appium steps from SSM using heuristics or optional LLM."""
+    """Derive Appium steps from SSM using heuristics or optional LLM (Cursor preferred)."""
 
     def __init__(self, prompt_template: str | None = None) -> None:
         self.prompt_template = prompt_template
         self.provider = os.getenv("STEP_BUILDER_PROVIDER", "heuristic").lower().strip()
+        self.project_root = Path(__file__).resolve().parents[1]
 
     def build_steps(self, ssm: Dict[str, Any]) -> Dict[str, Any]:
+        if self.provider in {"cursor", "cursor_sdk", "cursor-ai"} and os.getenv("CURSOR_API_KEY"):
+            try:
+                return self._build_with_cursor(ssm)
+            except Exception as exc:
+                logger.warning("[StepBuilder] Cursor LLM failed (%s); using heuristics", exc)
         if self.provider == "openai" and os.getenv("OPENAI_API_KEY"):
             try:
-                return self._build_with_llm(ssm)
+                return self._build_with_openai(ssm)
             except Exception as exc:
-                logger.warning("[StepBuilder] LLM failed (%s); using heuristics", exc)
+                logger.warning("[StepBuilder] OpenAI failed (%s); using heuristics", exc)
         return self._build_heuristic(ssm)
 
     def _build_heuristic(self, ssm: Dict[str, Any]) -> Dict[str, Any]:
@@ -76,7 +80,29 @@ class StepBuilder:
             return DEMO_USERNAME
         return "test"
 
-    def _build_with_llm(self, ssm: Dict[str, Any]) -> Dict[str, Any]:
+    def _parse_steps_json(self, text: str, ssm: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            match = re.search(r"\{.*\}", text, re.S)
+            if not match:
+                raise ValueError("StepBuilder LLM response was not JSON")
+            parsed = json.loads(match.group(0))
+        if "steps" not in parsed:
+            raise ValueError("StepBuilder LLM JSON missing steps")
+        parsed.setdefault("screen", ssm.get("screen_name") or "Screen")
+        return parsed
+
+    def _build_with_cursor(self, ssm: Dict[str, Any]) -> Dict[str, Any]:
+        from services.cursor_llm import cursor_prompt
+
+        prompt = (self.prompt_template or "") + "\n\nSSM JSON:\n" + json.dumps(ssm, indent=2)
+        text = cursor_prompt(prompt, cwd=self.project_root)
+        return self._parse_steps_json(text, ssm)
+
+    def _build_with_openai(self, ssm: Dict[str, Any]) -> Dict[str, Any]:
+        from openai import OpenAI
+
         prompt = (self.prompt_template or "") + "\n\nSSM JSON:\n" + json.dumps(ssm, indent=2)
         client = OpenAI(
             api_key=os.getenv("OPENAI_API_KEY"),
@@ -89,17 +115,7 @@ class StepBuilder:
             temperature=0,
         )
         text = (resp.choices[0].message.content or "").strip()
-        try:
-            parsed = json.loads(text)
-        except json.JSONDecodeError:
-            match = re.search(r"\{.*\}", text, re.S)
-            if not match:
-                raise ValueError("StepBuilder LLM response was not JSON")
-            parsed = json.loads(match.group(0))
-        if "steps" not in parsed:
-            raise ValueError("StepBuilder LLM JSON missing steps")
-        parsed.setdefault("screen", ssm.get("screen_name") or "Screen")
-        return parsed
+        return self._parse_steps_json(text, ssm)
 
 
 def load_step_prompt(project_root: Path) -> str | None:

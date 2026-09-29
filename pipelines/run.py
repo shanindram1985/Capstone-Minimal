@@ -80,7 +80,7 @@ def run_generate(images: list[Path]) -> list[Path]:
     _reset_dir(ssm_dir)
     _reset_dir(scripts_dir)
 
-    provider = os.getenv("VISION_AGENT_PROVIDER", "mock")
+    provider = os.getenv("VISION_AGENT_PROVIDER", "cursor")
     prompt_path = ROOT / "prompts" / "vision_analysis.txt"
     vision_prompt = prompt_path.read_text(encoding="utf-8") if prompt_path.exists() else None
     vision = create_vision_agent(provider=provider, prompt_template=vision_prompt)
@@ -127,7 +127,7 @@ def run_execute(images: list[Path], open_browser: bool = True) -> Path:
     _reset_dir(resolved_dir)
     os.environ["RESOLVED_LOCATORS_DIR"] = str(resolved_dir)
 
-    provider = os.getenv("VISION_AGENT_PROVIDER", "mock")
+    provider = os.getenv("VISION_AGENT_PROVIDER", "cursor")
     prompt_path = ROOT / "prompts" / "vision_analysis.txt"
     vision_prompt = prompt_path.read_text(encoding="utf-8") if prompt_path.exists() else None
     vision = create_vision_agent(provider=provider, prompt_template=vision_prompt)
