@@ -50,7 +50,7 @@ artifacts/input_screenshots/*.png
 ## Project layout
 
 ```
-Capstone-Minimal/   # Mobile Script Generator - Wireframe
+Mobile-Script-Generator-Wireframe/
 ├── agents/
 │   ├── vision_agent.py          # Screenshot → SSM
 │   ├── step_builder.py          # SSM → ordered actions
@@ -92,7 +92,7 @@ Capstone-Minimal/   # Mobile Script Generator - Wireframe
 ### One-shot Windows install
 
 ```powershell
-cd Capstone-Minimal
+cd Mobile-Script-Generator-Wireframe
 powershell -ExecutionPolicy Bypass -File .\scripts\install_prereqs.ps1
 # Open a NEW terminal after winget finishes, then:
 powershell -ExecutionPolicy Bypass -File .\scripts\setup_env.ps1
@@ -130,7 +130,7 @@ Ensure `APP_PATH` points at `demo_mobile_apps/mda-2.2.0-25.apk` (resolved to an 
 Always use the project venv (do **not** call bare `python` from system PATH):
 
 ```powershell
-cd c:\Users\siddh\OneDrive\Desktop\Capstone-Minimal
+cd c:\Users\siddh\OneDrive\Desktop\Mobile-Script-Generator-Wireframe
 .\.venv\Scripts\Activate.ps1
 # recommended wrapper:
 .\scripts\run.ps1 generate artifacts\input_screenshots\Login.png
