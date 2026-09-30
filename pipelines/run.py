@@ -77,8 +77,12 @@ def run_generate(images: list[Path]) -> list[Path]:
 
     ssm_dir = ROOT / "artifacts" / "ssm_json_output"
     scripts_dir = ROOT / "artifacts" / "generated_appium_scripts"
+    steps_dir = ROOT / "artifacts" / "step_output"
+    manual_dir = ROOT / "artifacts" / "manual_test_cases"
     _reset_dir(ssm_dir)
     _reset_dir(scripts_dir)
+    _reset_dir(steps_dir)
+    _reset_dir(manual_dir)
 
     provider = os.getenv("VISION_AGENT_PROVIDER", "cursor")
     prompt_path = ROOT / "prompts" / "vision_analysis.txt"
@@ -97,10 +101,13 @@ def run_generate(images: list[Path]) -> list[Path]:
         out.write_text(ssm.model_dump_json(indent=2), encoding="utf-8")
         print(f"      SSM saved -> {out.name}")
 
-        print("[2/3] Build actionable steps")
+        print("[2/3] Build actionable steps and manual test cases")
         step_payload = steps_agent.build_steps(ssm.model_dump())
         cases = step_payload.get("cases") or []
+        written = steps_agent.write_artifacts(step_payload)
         print(f"      {len(cases)} test cases for '{step_payload.get('screen')}'")
+        print(f"      Steps -> {written['steps'].name}")
+        print(f"      Manual cases -> {written['manual'].name}")
 
         print("[3/3] Generate Appium script with DUMMY locators")
         script_path = generator.generate(step_payload, mode="dummy", output_dir=scripts_dir)
@@ -122,9 +129,13 @@ def run_execute(images: list[Path], open_browser: bool = True) -> Path:
 
     ssm_dir = ROOT / "artifacts" / "ssm_json_output"
     scripts_dir = ROOT / "artifacts" / "generated_appium_scripts"
+    steps_dir = ROOT / "artifacts" / "step_output"
+    manual_dir = ROOT / "artifacts" / "manual_test_cases"
     resolved_dir = ROOT / "artifacts" / "resolved_locators"
     _reset_dir(ssm_dir)
     _reset_dir(scripts_dir)
+    _reset_dir(steps_dir)
+    _reset_dir(manual_dir)
     _reset_dir(resolved_dir)
     os.environ["RESOLVED_LOCATORS_DIR"] = str(resolved_dir)
 
@@ -144,10 +155,13 @@ def run_execute(images: list[Path], open_browser: bool = True) -> Path:
         out.write_text(ssm.model_dump_json(indent=2), encoding="utf-8")
         print(f"      SSM saved -> {out.name}")
 
-        print("[2/3] Build steps + generate RUNTIME script (locators fetched on device)")
+        print("[2/3] Build steps, manual cases, and RUNTIME script (locators fetched on device)")
         step_payload = steps_agent.build_steps(ssm.model_dump())
         cases = step_payload.get("cases") or []
+        written = steps_agent.write_artifacts(step_payload)
         print(f"      {len(cases)} test cases for '{step_payload.get('screen')}'")
+        print(f"      Steps -> {written['steps'].name}")
+        print(f"      Manual cases -> {written['manual'].name}")
         script_path = generator.generate(step_payload, mode="runtime", output_dir=scripts_dir)
         print(f"      Script -> {script_path}")
 

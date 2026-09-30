@@ -6,6 +6,8 @@ __pycache__/
 .mypy_cache/
 *.log
 artifacts/ssm_json_output/
+artifacts/step_output/
+artifacts/manual_test_cases/
 artifacts/generated_appium_scripts/
 artifacts/test_execution_reports/
 artifacts/resolved_locators/

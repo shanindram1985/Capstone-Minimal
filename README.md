@@ -31,6 +31,9 @@ artifacts/input_screenshots/*.png
      ┌──────────────┐
      │ Step Builder │  prompts/script_steps.txt
      └──────┬───────┘   retail cases from this SSM only
+            │
+            ├── artifacts/step_output/*_steps.json
+            ├── artifacts/manual_test_cases/*_manual_test_cases.md
             ▼
      ┌───────────────────┐
      │ Script Generator  │  one pytest method per case
@@ -54,7 +57,7 @@ artifacts/input_screenshots/*.png
 Mobile-Script-Generator-Wireframe/
 ├── agents/
 │   ├── vision_agent.py          # Screenshot → SSM
-│   ├── step_builder.py          # SSM → positive / negative / edge cases
+│   ├── step_builder.py          # SSM → steps JSON + manual test cases
 │   ├── script_generator.py      # Cases → Appium pytest
 │   └── reporter_agent.py        # Visual HTML report
 ├── runtime/locator_resolver.py  # Live page-source locator fetch
@@ -282,6 +285,8 @@ A connection error means Appium is not running.
 Writes:
 
 - `artifacts/ssm_json_output/ssm_<Screen>_*.json`
+- `artifacts/step_output/<screen>_steps.json` — the steps the script generator uses
+- `artifacts/manual_test_cases/<screen>_manual_test_cases.md` — the same cases for a tester
 - `artifacts/generated_appium_scripts/test_<screen>_screen.py`
 
 ### 10. Execute (emulator `device` + Appium up)
@@ -301,6 +306,7 @@ curl http://127.0.0.1:4723/status
 
 Output:
 
+- `artifacts/step_output/` and `artifacts/manual_test_cases/`
 - Runtime script under `artifacts/generated_appium_scripts/`
 - `artifacts/resolved_locators/`
 - `artifacts/test_execution_reports/<timestamp>/report.html`

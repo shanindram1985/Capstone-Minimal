@@ -1,4 +1,4 @@
-"""Build ordered actionable steps from SSM (no manual testcases)."""
+"""Build ordered actionable steps from SSM, plus a manual test-case document."""
 
 from __future__ import annotations
 
@@ -58,6 +58,7 @@ class StepBuilder:
         self.project_root = Path(__file__).resolve().parents[1]
 
     def build_steps(self, ssm: Dict[str, Any]) -> Dict[str, Any]:
+        """Return the steps-only payload the script generator already consumes."""
         if self.provider in {"cursor", "cursor_sdk", "cursor-ai"} and os.getenv("CURSOR_API_KEY"):
             try:
                 return self._build_with_cursor(ssm)
@@ -69,6 +70,23 @@ class StepBuilder:
             except Exception as exc:
                 logger.warning("[StepBuilder] OpenAI failed (%s); using heuristics", exc)
         return self._build_heuristic(ssm)
+
+    def write_artifacts(self, step_payload: Dict[str, Any], output_root: Path | None = None) -> Dict[str, Path]:
+        """Save the steps payload and a manual test-case document for the same cases."""
+        root = output_root or self.project_root
+        screen = str(step_payload.get("screen") or "Screen")
+        slug = _slug(screen)
+        steps_dir = root / "artifacts" / "step_output"
+        manual_dir = root / "artifacts" / "manual_test_cases"
+        steps_dir.mkdir(parents=True, exist_ok=True)
+        manual_dir.mkdir(parents=True, exist_ok=True)
+
+        steps_path = steps_dir / f"{slug}_steps.json"
+        manual_path = manual_dir / f"{slug}_manual_test_cases.md"
+        steps_path.write_text(json.dumps(step_payload, indent=2) + "\n", encoding="utf-8")
+        manual_path.write_text(render_manual_cases(step_payload), encoding="utf-8")
+        logger.info("[StepBuilder] Wrote %s and %s", steps_path.name, manual_path.name)
+        return {"steps": steps_path, "manual": manual_path}
 
     def _build_heuristic(self, ssm: Dict[str, Any]) -> Dict[str, Any]:
         screen = str(ssm.get("screen_name") or "Screen")
@@ -536,6 +554,109 @@ def _action_label(actions: List[Dict[str, str]], needles: tuple[str, ...], fallb
 def _slug(value: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "_", str(value).strip().lower()).strip("_")
     return slug or "item"
+
+
+def render_manual_cases(step_payload: Dict[str, Any]) -> str:
+    """Turn the steps payload into a tester-facing case list. The payload itself is unchanged."""
+    screen = str(step_payload.get("screen") or "Screen")
+    cases = [case for case in (step_payload.get("cases") or []) if isinstance(case, dict)]
+    lines = [
+        f"# {screen} — manual test cases",
+        "",
+        "Written from the same cases the script generator uses. Each case is independent.",
+        "",
+        "## Preconditions",
+        "",
+    ]
+    for item in _manual_preconditions(screen):
+        lines.append(f"- {item}")
+    lines.extend(["", "## Index", "", "| ID | Category | Case | Expected result |", "|---|---|---|---|"])
+    for index, case in enumerate(cases, start=1):
+        lines.append(
+            "| {id} | {category} | {name} | {expected} |".format(
+                id=f"TC-{index:03d}",
+                category=_md_cell(_category_label(case.get("category"))),
+                name=_md_cell(_title_from_name(str(case.get("name") or "scenario"))),
+                expected=_md_cell(str(case.get("expected") or "")),
+            )
+        )
+    lines.append("")
+    for index, case in enumerate(cases, start=1):
+        lines.extend(_manual_case_section(index, screen, case))
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _manual_case_section(index: int, screen: str, case: Dict[str, Any]) -> List[str]:
+    name = _title_from_name(str(case.get("name") or "scenario"))
+    category = _category_label(case.get("category"))
+    expected = str(case.get("expected") or f"{screen} behaves as designed for this case.").strip()
+    lines = [
+        f"## TC-{index:03d} — {name}",
+        "",
+        f"- **Screen:** {screen}",
+        f"- **Category:** {category}",
+        f"- **Expected result:** {expected}",
+        "",
+        "| Step | Action |",
+        "|---|---|",
+    ]
+    steps = case.get("steps") or []
+    if not steps:
+        lines.append("| 1 | No steps were produced for this case. |")
+    for step_index, step in enumerate(steps, start=1):
+        lines.append(f"| {step_index} | {_md_cell(_manual_action(step))} |")
+    lines.append("")
+    return lines
+
+
+def _manual_action(step: Dict[str, Any]) -> str:
+    element = str(step.get("element") or "the control").strip()
+    action = str(step.get("action") or "verify").strip().lower()
+    if action == "type":
+        value = step.get("input_value")
+        text = "" if value is None else str(value)
+        if text == "":
+            return f"Clear {element} and leave it empty."
+        if text.strip() == "":
+            return f"Enter only spaces in {element}."
+        return f"Enter `{text}` in {element}."
+    if action == "tap":
+        return f"Tap {element}."
+    if action == "scroll":
+        return f"Scroll until {element} is visible."
+    return f"Confirm {element} is visible."
+
+
+def _manual_preconditions(screen: str) -> List[str]:
+    key = screen.strip().lower()
+    if "login" in key or "sign in" in key:
+        return [
+            "The demo shop app is installed and open.",
+            "From the catalog, open the menu and choose Log In so the login screen is showing.",
+        ]
+    if "cart" in key:
+        return [
+            "The demo shop app is installed and open.",
+            "Open the cart from the shop header.",
+        ]
+    return [
+        "The demo shop app is installed and open.",
+        f"The shopper is on the {screen} screen.",
+    ]
+
+
+def _category_label(value: Any) -> str:
+    text = str(value or "case").strip().lower()
+    return text[:1].upper() + text[1:] if text else "Case"
+
+
+def _title_from_name(name: str) -> str:
+    words = name.replace("_", " ").strip()
+    return words[:1].upper() + words[1:] if words else "Scenario"
+
+
+def _md_cell(value: str) -> str:
+    return value.replace("|", "\\|").replace("\n", " ").strip()
 
 
 def load_step_prompt(project_root: Path) -> str | None:
